@@ -1,52 +1,70 @@
+/* passivesock.c - passivesock */
+
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/errno.h>
-#include <netinet/in.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
-#include <fcntl.h>
+#include <netdb.h>
+#include <stdio.h>
 #include <unistd.h>
 
-#define	QLEN		  5
-#define	BUFFERSIZE		4096
+int passivesockTCP(char *service, int qlen)
+{
+    struct addrinfo hints, *result, *rep;
+    int sfd = -1;
+    int state;
+    int opt = 1;
 
-extern int	errno;
-int	errexit(const char *format, ...);
-int	passiveTCP(const char *service, int qlen);
+    memset(&hints, 0, sizeof(hints));
 
-int main(int argc, char *argv[]){
-    struct	sockaddr_in fsin;
-    unsigned int	alen;
-    char rbuffer[BUFFERSIZE];
-    char fbuffer[BUFFERSIZE];
-    char sdbuffer[BUFFERSIZE];
-    int size_read, size_send, passive_sock, new_sock, file_d;
-    char url[1024];
-    char metodo[1024];
+    hints.ai_family = AF_INET;
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_socktype = SOCK_STREAM;
 
-    char	*service = "http";
-
-    passive_sock = passiveTCP(service, QLEN);
-
-    while (1)
+    state = getaddrinfo(NULL, service, &hints, &result);
+    if (state != 0)
     {
-        new_sock = accept(passive_sock, (struct sockaddr *)&fsin, &alen);
-        size_read = read(new_sock, rbuffer, sizeof rbuffer);
-
-        sscanf(rbuffer, "%9s %49s", metodo, url);
-
-        printf("URL solicitada: %s", url);
-
-        file_d = open(url, O_RDONLY);
-
-        while (size_read = read(file_d, fbuffer, sizeof fbuffer))
-        {    
-            size_send = send(new_sock, fbuffer, sizeof fbuffer, 0);
-        }
-        close(file_d);
-        close(new_sock);
+        fprintf(stderr, "Fallo en getaddrinfo: %s\n", gai_strerror(state));
+        exit(EXIT_FAILURE);
     }
-    
-}
 
+    for (rep = result; rep != NULL; rep = rep->ai_next)
+    {
+        sfd = socket(rep->ai_family, rep->ai_socktype, rep->ai_protocol);
+        if (sfd < 0)
+        {
+            continue;
+        }
+
+        if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+        {
+            perror("Error en setsockopt");
+            close(sfd);
+            exit(EXIT_FAILURE);
+        }
+
+        if (bind(sfd, rep->ai_addr, rep->ai_addrlen) == 0)
+            break;
+
+        close(sfd);
+        sfd = -1;
+    }
+
+    freeaddrinfo(result);
+
+    if (sfd < 0)
+    {
+        fprintf(stderr, "Fallo al hacer bind\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(sfd, qlen) < 0)
+    {
+        close(sfd);
+        fprintf(stderr, "Fallo al hacer listen\n");
+        exit(EXIT_FAILURE);
+    }
+
+    return sfd;
+}
