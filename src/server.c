@@ -55,7 +55,7 @@ int passivesockTCP(char *service, int qlen)
 
     if (sfd < 0)
     {
-        fprintf(stderr, "Fallo al hacer bind\n");
+        perror("Error en bind");
         exit(EXIT_FAILURE);
     }
 

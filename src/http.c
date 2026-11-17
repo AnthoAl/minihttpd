@@ -1,16 +1,20 @@
 #include <stdio.h>
+#include <strings.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <limits.h>
 #include <errno.h>
 #include "../include/http.h"
+#include "../include/mime.h"
+#include "../include/files.h"
 
 struct solicitud_http
 {
     char metodo[16];
-    char recurso[30];
+    char recurso[50];
     char version[10];
 
     char host[100];
@@ -41,10 +45,18 @@ int parseoSolicitud(const char *bufferSoli, int sock)
         {"Connection:", 11, sol_cliente.connection, sizeof(sol_cliente.connection), NULL},
         {"User-Agent:", 11, sol_cliente.user_agent, sizeof(sol_cliente.user_agent), NULL}};
 
-    char *fin_sol, *fin_headers, sol_line[100];
+    char *fin_lsol, *fin_headers;
 
-    if (snprintf(sol_line, sizeof(sol_line), "%s", bufferSoli) >= sizeof(sol_line))
+    fin_lsol = strstr(bufferSoli, "\r\n");
+    size_t tam_linerq = fin_lsol - bufferSoli;
+    if (tam_linerq > 100)
+    {
         return generarRespuesta(sock, 400, NULL, "close");
+    }
+
+    char sol_line[tam_linerq + 1];
+    strncpy(sol_line, bufferSoli, tam_linerq);
+    sol_line[tam_linerq] = '\0';
 
     if (sscanf(sol_line, "%15s %29s %9s", sol_cliente.metodo, sol_cliente.recurso, sol_cliente.version) != 3)
         return generarRespuesta(sock, 400, NULL, "close");
@@ -55,10 +67,9 @@ int parseoSolicitud(const char *bufferSoli, int sock)
     if (strcmp(sol_cliente.version, "HTTP/1.1") != 0)
         return generarRespuesta(sock, 400, NULL, "close");
 
-    fin_sol = strstr(bufferSoli, "\r\n");
     fin_headers = strstr(bufferSoli, "\r\n\r\n");
 
-    char *inicio_headers = fin_sol + 2;
+    char *inicio_headers = fin_lsol + 2;
     char *aux;
     fin_headers = fin_headers + 2;
 
@@ -73,7 +84,7 @@ int parseoSolicitud(const char *bufferSoli, int sock)
         strncpy(header, inicio_headers, tam_header);
         header[tam_header] = '\0';
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < sizeof(headers_basicos) / sizeof(headers_basicos[0]); i++)
         {
             if (strncasecmp(header, headers_basicos[i].field_name, headers_basicos[i].len_fname) == 0)
             {
@@ -111,10 +122,9 @@ int parseoSolicitud(const char *bufferSoli, int sock)
 /*
     Retorna 1 cerrar la conexión y 0 mantenerla
 */
-int generarRespuesta(int sock, int codigo, const char *ruta_archivo, const char *conexion)
+int generarRespuesta(int sock, int codigo, const char *ruta_cliente, const char *conexion)
 {
     char cabecera[1024];
-    struct stat st;
 
     // Respuestas de error
     if (codigo != 200)
@@ -138,39 +148,30 @@ int generarRespuesta(int sock, int codigo, const char *ruta_archivo, const char 
         return 1;
     }
 
-    char rutaFix[50];
+    char ruta_file[PATH_MAX];
+    off_t tam_file;
 
-    snprintf(rutaFix, sizeof(rutaFix), "../www%s", ruta_archivo);
+    int codigo_ruta = obtenerRuta(ruta_cliente, ruta_file, sizeof(ruta_file), &tam_file);
 
-    int file_d = open(rutaFix, O_RDONLY);
-    if (file_d < 0)
+    if (codigo_ruta != 200)
     {
-        switch (errno)
-        {
-        case ENOENT:
-            return generarRespuesta(sock, 404, NULL, "close");
-
-        case EACCES:
-            return generarRespuesta(sock, 403, NULL, "close");
-
-        default:
-            return generarRespuesta(sock, 500, NULL, "close");
-        }
+        return generarRespuesta(sock, codigo_ruta, NULL, "close");
     }
 
-    if (fstat(file_d, &st) != 0)
+    int file_d = open(ruta_file, O_RDONLY);
+
+    if (file_d < 0)
     {
-        close(file_d);
         return generarRespuesta(sock, 500, NULL, "close");
     }
 
     int len_cabecera = snprintf(cabecera, sizeof(cabecera),
                                 "HTTP/1.1 %d %s\r\n"
-                                "Content-Type: text/html\r\n"
+                                "Content-Type: %s\r\n"
                                 "Content-Length: %lld\r\n"
                                 "Connection: %s"
                                 "\r\n\r\n",
-                                codigo, mapeo_mensaje(codigo), (long long)st.st_size, conexion);
+                                codigo, mapeo_mensaje(codigo), identificarTipo(ruta_file), (long long)tam_file, conexion);
 
     send(sock, cabecera, len_cabecera, 0);
 

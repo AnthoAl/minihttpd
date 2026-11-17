@@ -4,11 +4,10 @@
 #include <unistd.h>
 #include <stdio.h>
 #include "../include/http.h"
+#include "../include/server.h"
 
 #define QLEN 5
 #define BUFFERSIZE 4096
-
-int passivesockTCP(char *service, int qlen);
 
 int main()
 {
