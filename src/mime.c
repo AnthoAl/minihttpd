@@ -23,7 +23,7 @@ const char *identificarTipo(const char *ruta_archivo)
         {".jpg", "image/jpeg"},
     };
 
-    for (int i = 0; i < sizeof(mapeo_tipo_file) / sizeof(mapeo_tipo_file[0]); i++)
+    for (size_t i = 0; i < sizeof(mapeo_tipo_file) / sizeof(mapeo_tipo_file[0]); i++)
     {
         if (strcasecmp(tipo_file, mapeo_tipo_file[i].extension) == 0)
         {

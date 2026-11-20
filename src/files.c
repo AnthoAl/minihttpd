@@ -32,13 +32,13 @@ int obtenerRuta(const char *ruta_cliente, char *ruta_valida, size_t tam_ruta_max
 
     if (realpath(posible_ruta, ruta_real) == NULL)
     {
-        if (errno == ENOENT || errno == ENOTDIR)
-        {
-            return 404;
-        }
         if (errno == EACCES)
         {
             return 403;
+        }
+        if (errno == ENOENT || errno == ENOTDIR)
+        {
+            return 404;
         }
         return 500;
     }

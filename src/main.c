@@ -6,8 +6,8 @@
 #include <sys/epoll.h>
 #include <errno.h>
 #include <string.h>
-#include "../include/http.h"
-#include "../include/server.h"
+#include "http.h"
+#include "server.h"
 
 #define QLEN 5
 #define MAX_EVENTOS 64

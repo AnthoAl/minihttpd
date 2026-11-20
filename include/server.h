@@ -1,22 +1,8 @@
-#include <stddef.h>
-#include <sys/types.h>
-
 #ifndef PASSIVE_S
 #define PASSIVE_S
 
-int passivesockTCP(char *service, int qlen);
-
-void aceptarClientes(int passive_sock, int fd_epoll);
-
-void manejarLectura(int epfd, struct sesion_sock *cliente);
-
-void manejarEscritura(int epfd, struct sesion_sock *cliente);
-
-void finalizarEnvio(int fd_epoll, struct sesion_sock *cliente);
-
-void cerrarCliente(int epfd, struct sesion_sock *cliente);
-
-#endif
+#include <stddef.h>
+#include <sys/types.h>
 
 enum estados
 {
@@ -41,3 +27,17 @@ struct sesion_sock
     enum estados estado;
     int keep_alive;
 };
+
+int passivesockTCP(char *service, int qlen);
+
+void aceptarClientes(int passive_sock, int fd_epoll);
+
+void manejarLectura(int fd_epoll, struct sesion_sock *cliente);
+
+void manejarEscritura(int fd_epoll, struct sesion_sock *cliente);
+
+void finalizarEnvio(int fd_epoll, struct sesion_sock *cliente);
+
+void cerrarCliente(int fd_epoll, struct sesion_sock *cliente);
+
+#endif

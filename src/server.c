@@ -8,8 +8,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include "../include/http.h"
-#include "../include/server.h"
+#include "http.h"
+#include "server.h"
 
 static int configurarNoBloqueante(int fd)
 {

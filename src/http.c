@@ -7,9 +7,9 @@
 #include <unistd.h>
 #include <limits.h>
 #include <errno.h>
-#include "../include/http.h"
-#include "../include/mime.h"
-#include "../include/files.h"
+#include "http.h"
+#include "mime.h"
+#include "files.h"
 
 struct solicitud_http
 {
@@ -33,9 +33,11 @@ struct formato_headers
     int *bandera;
 };
 
+static const char *mapeo_mensaje(int codigo);
+
 void parseoSolicitud(struct sesion_sock *cliente)
 {
-    if (cliente->buffer_soli == NULL || strstr(cliente->buffer_soli, "\r\n\r\n") == NULL)
+    if (cliente == NULL || cliente->bytes_recibidos == 0 || strstr(cliente->buffer_soli, "\r\n\r\n") == NULL)
     {
         generarRespuesta(cliente, 400, NULL, "close");
         cliente->keep_alive = 0;
@@ -105,7 +107,7 @@ void parseoSolicitud(struct sesion_sock *cliente)
         strncpy(header, inicio_headers, tam_header);
         header[tam_header] = '\0';
 
-        for (int i = 0; i < sizeof(headers_basicos) / sizeof(headers_basicos[0]); i++)
+        for (size_t i = 0; i < sizeof(headers_basicos) / sizeof(headers_basicos[0]); i++)
         {
             if (strncasecmp(header, headers_basicos[i].field_name, headers_basicos[i].len_fname) == 0)
             {
@@ -206,10 +208,10 @@ void generarRespuesta(struct sesion_sock *cliente, int codigo, const char *ruta_
                                 codigo, mapeo_mensaje(codigo), identificarTipo(ruta_file), (long long)cliente->tam_file, conexion);
 
     cliente->tam_buffer_resp = len_cabecera;
-    snprintf(cliente->buffer_resp, cliente->tam_buffer_resp, "%s", cabecera);
+    snprintf(cliente->buffer_resp, sizeof(cliente->buffer_resp), "%s", cabecera);
 }
 
-char *mapeo_mensaje(int codigo)
+static const char *mapeo_mensaje(int codigo)
 {
     switch (codigo)
     {
