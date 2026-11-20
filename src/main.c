@@ -15,7 +15,7 @@
 int main()
 {
     int passive_sock;
-    char *service = "http";
+    char *service = "8080";
     struct epoll_event ev, eventos[MAX_EVENTOS];
 
     passive_sock = passivesockTCP(service, QLEN);

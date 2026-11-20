@@ -128,21 +128,23 @@ void manejarLectura(int fd_epoll, struct sesion_sock *cliente)
             cliente->bytes_recibidos += readed;
             cliente->buffer_soli[cliente->bytes_recibidos] = '\0';
 
-            if (strstr(cliente->buffer_soli, '\r\n\r\n') != NULL)
+            if (strstr(cliente->buffer_soli, "\r\n\r\n") != NULL)
             {
                 cliente->estado = ENVIANDO_CABECERAS;
                 ev.events = EPOLLOUT;
                 ev.data.ptr = cliente;
                 epoll_ctl(fd_epoll, EPOLL_CTL_MOD, cliente->fd_sock, &ev);
-                parseoSolicitud(cliente->buffer_soli, cliente->fd_sock);
+                parseoSolicitud(cliente);
                 break;
             }
-            else if (cliente->bytes_recibidos == sizeof(cliente->buffer_soli))
+            else if (cliente->bytes_recibidos == sizeof(cliente->buffer_soli) - 1)
             {
+                cliente->estado = ENVIANDO_CABECERAS;
                 ev.events = EPOLLOUT;
                 ev.data.ptr = cliente;
                 epoll_ctl(fd_epoll, EPOLL_CTL_MOD, cliente->fd_sock, &ev);
-                generarRespuesta(cliente->fd_sock, 400, NULL, "close");
+                generarRespuesta(cliente, 400, NULL, "close");
+                break;
             }
         }
         else if (readed == 0)
@@ -257,6 +259,11 @@ void finalizarEnvio(int fd_epoll, struct sesion_sock *cliente)
     {
         cliente->bytes_recibidos = 0;
         cliente->bytes_enviados = 0;
+        cliente->file_offset = 0;
+        cliente->tam_buffer_resp = 0;
+        cliente->tam_file = 0;
+        memset(cliente->buffer_resp, 0, sizeof(cliente->buffer_resp));
+        memset(cliente->buffer_soli, 0, sizeof(cliente->buffer_soli));
         cliente->estado = LEYENDO_PETICION;
         ev.events = EPOLLIN;
         ev.data.ptr = cliente;

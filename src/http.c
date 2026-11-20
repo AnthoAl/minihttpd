@@ -33,10 +33,14 @@ struct formato_headers
     int *bandera;
 };
 
-int parseoSolicitud(const char *bufferSoli, int sock)
+void parseoSolicitud(struct sesion_sock *cliente)
 {
-    if (bufferSoli == NULL || strstr(bufferSoli, "\r\n\r\n") == NULL)
-        return generarRespuesta(sock, 400, NULL, "close");
+    if (cliente->buffer_soli == NULL || strstr(cliente->buffer_soli, "\r\n\r\n") == NULL)
+    {
+        generarRespuesta(cliente, 400, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
+    }
 
     struct solicitud_http sol_cliente = {0};
 
@@ -47,27 +51,41 @@ int parseoSolicitud(const char *bufferSoli, int sock)
 
     char *fin_lsol, *fin_headers;
 
-    fin_lsol = strstr(bufferSoli, "\r\n");
-    size_t tam_linerq = fin_lsol - bufferSoli;
+    fin_lsol = strstr(cliente->buffer_soli, "\r\n");
+    size_t tam_linerq = fin_lsol - cliente->buffer_soli;
     if (tam_linerq > 100)
     {
-        return generarRespuesta(sock, 400, NULL, "close");
+        generarRespuesta(cliente, 400, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
     }
 
     char sol_line[tam_linerq + 1];
-    strncpy(sol_line, bufferSoli, tam_linerq);
+    strncpy(sol_line, cliente->buffer_soli, tam_linerq);
     sol_line[tam_linerq] = '\0';
 
     if (sscanf(sol_line, "%15s %29s %9s", sol_cliente.metodo, sol_cliente.recurso, sol_cliente.version) != 3)
-        return generarRespuesta(sock, 400, NULL, "close");
+    {
+        generarRespuesta(cliente, 400, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
+    }
 
     if (strcmp(sol_cliente.metodo, "GET") != 0)
-        return generarRespuesta(sock, 405, NULL, "close");
+    {
+        generarRespuesta(cliente, 405, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
+    }
 
     if (strcmp(sol_cliente.version, "HTTP/1.1") != 0)
-        return generarRespuesta(sock, 400, NULL, "close");
+    {
+        generarRespuesta(cliente, 400, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
+    }
 
-    fin_headers = strstr(bufferSoli, "\r\n\r\n");
+    fin_headers = strstr(cliente->buffer_soli, "\r\n\r\n");
 
     char *inicio_headers = fin_lsol + 2;
     char *aux;
@@ -77,7 +95,10 @@ int parseoSolicitud(const char *bufferSoli, int sock)
     {
         aux = strstr(inicio_headers, "\r\n");
         if (aux == NULL || aux > fin_headers)
-            return generarRespuesta(sock, 400, NULL, "close");
+        {
+            generarRespuesta(cliente, 400, NULL, "close");
+            return;
+        }
 
         size_t tam_header = aux - inicio_headers;
         char header[tam_header + 1];
@@ -95,7 +116,8 @@ int parseoSolicitud(const char *bufferSoli, int sock)
 
                 if (snprintf(headers_basicos[i].destino, headers_basicos[i].max_destino, "%s", field_value) >= headers_basicos[i].max_destino)
                 {
-                    return generarRespuesta(sock, 400, NULL, "close");
+                    generarRespuesta(cliente, 400, NULL, "close");
+                    return;
                 }
 
                 if (headers_basicos[i].bandera != NULL)
@@ -108,21 +130,28 @@ int parseoSolicitud(const char *bufferSoli, int sock)
 
     if (!sol_cliente.tiene_host || sol_cliente.host[0] == '\0')
     {
-        return generarRespuesta(sock, 400, NULL, "close");
+        generarRespuesta(cliente, 400, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
     }
 
-    if (sol_cliente.connection[0] == '\0')
+    if (strcasecmp(sol_cliente.connection, "close") == 0)
+    {
+        cliente->keep_alive = 0;
+    }
+    else
     {
         snprintf(sol_cliente.connection, sizeof(sol_cliente.connection), "keep-alive");
+        cliente->keep_alive = 1;
     }
 
-    return generarRespuesta(sock, 200, sol_cliente.recurso, sol_cliente.connection);
+    generarRespuesta(cliente, 200, sol_cliente.recurso, sol_cliente.connection);
 }
 
 /*
     Retorna 1 cerrar la conexión y 0 mantenerla
 */
-int generarRespuesta(int sock, int codigo, const char *ruta_cliente, const char *conexion)
+void generarRespuesta(struct sesion_sock *cliente, int codigo, const char *ruta_cliente, const char *conexion)
 {
     char cabecera[1024];
 
@@ -143,26 +172,29 @@ int generarRespuesta(int sock, int codigo, const char *ruta_cliente, const char 
                                     "\r\n\r\n",
                                     codigo, mapeo_mensaje(codigo), len_mensaje, conexion);
 
-        send(sock, cabecera, len_cabecera, 0);
-        send(sock, mensaje_error, len_mensaje, 0);
-        return 1;
+        cliente->tam_buffer_resp = len_cabecera + len_mensaje;
+        snprintf(cliente->buffer_resp, sizeof(cliente->buffer_resp), "%s%s", cabecera, mensaje_error);
+        return;
     }
 
     char ruta_file[PATH_MAX];
-    off_t tam_file;
 
-    int codigo_ruta = obtenerRuta(ruta_cliente, ruta_file, sizeof(ruta_file), &tam_file);
+    int codigo_ruta = obtenerRuta(ruta_cliente, ruta_file, sizeof(ruta_file), &cliente->tam_file);
 
     if (codigo_ruta != 200)
     {
-        return generarRespuesta(sock, codigo_ruta, NULL, "close");
+        generarRespuesta(cliente, codigo_ruta, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
     }
 
-    int file_d = open(ruta_file, O_RDONLY);
+    cliente->fd_file_sol = open(ruta_file, O_RDONLY);
 
-    if (file_d < 0)
+    if (cliente->fd_file_sol < 0)
     {
-        return generarRespuesta(sock, 500, NULL, "close");
+        generarRespuesta(cliente, 500, NULL, "close");
+        cliente->keep_alive = 0;
+        return;
     }
 
     int len_cabecera = snprintf(cabecera, sizeof(cabecera),
@@ -171,25 +203,10 @@ int generarRespuesta(int sock, int codigo, const char *ruta_cliente, const char 
                                 "Content-Length: %lld\r\n"
                                 "Connection: %s"
                                 "\r\n\r\n",
-                                codigo, mapeo_mensaje(codigo), identificarTipo(ruta_file), (long long)tam_file, conexion);
+                                codigo, mapeo_mensaje(codigo), identificarTipo(ruta_file), (long long)cliente->tam_file, conexion);
 
-    send(sock, cabecera, len_cabecera, 0);
-
-    char bloque[4096];
-    ssize_t bytes_leidos;
-    while ((bytes_leidos = read(file_d, bloque, sizeof(bloque))) > 0)
-    {
-        send(sock, bloque, bytes_leidos, 0);
-    }
-
-    close(file_d);
-
-    if (strcasecmp(conexion, "close") == 0)
-    {
-        return 1;
-    }
-
-    return 0;
+    cliente->tam_buffer_resp = len_cabecera;
+    snprintf(cliente->buffer_resp, cliente->tam_buffer_resp, "%s", cabecera);
 }
 
 char *mapeo_mensaje(int codigo)

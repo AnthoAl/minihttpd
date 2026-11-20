@@ -1,6 +1,7 @@
+#include "../include/server.h"
+
 #ifndef HTTP
 #define HTTP
-int parseoSolicitud(const char *bufferSoli, int sock);
-char *mapeo_mensaje(int codigo);
-int generarRespuesta(int sock, int codigo, const char *ruta_archivo, const char *conexion);
+void parseoSolicitud(struct sesion_sock *cliente);
+void generarRespuesta(struct sesion_sock *cliente, int codigo, const char *ruta_cliente, const char *conexion);
 #endif
