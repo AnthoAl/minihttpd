@@ -3,45 +3,51 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <sys/epoll.h>
+#include <errno.h>
+#include <string.h>
 #include "../include/http.h"
 #include "../include/server.h"
 
 #define QLEN 5
-#define BUFFERSIZE 4096
+#define MAX_EVENTOS 64
 
 int main()
 {
-    struct sockaddr_in fsin;
-    unsigned int alen;
-    char rbuffer[BUFFERSIZE];
-    int size_read, passive_sock, new_sock;
+    int passive_sock;
     char *service = "http";
+    struct epoll_event ev, eventos[MAX_EVENTOS];
 
     passive_sock = passivesockTCP(service, QLEN);
 
+    int fpoll = epoll_create1(0);
+    struct sesion_sock smaster = {.fd_sock = passive_sock};
+    ev.events = EPOLLIN;
+    ev.data.ptr = &smaster;
+    epoll_ctl(fpoll, EPOLL_CTL_ADD, passive_sock, &ev);
+
     while (1)
     {
-        alen = sizeof(fsin);
-        new_sock = accept(passive_sock, (struct sockaddr *)&fsin, &alen);
-
-        while (1)
+        int fd_socklistos = epoll_wait(fpoll, &ev, MAX_EVENTOS, -1);
+        for (int i = 0; i < fd_socklistos; i++)
         {
-            size_read = read(new_sock, rbuffer, BUFFERSIZE - 1);
+            struct sesion_sock *strueventos = (struct Sesion *)eventos[i].data.ptr;
 
-            if (size_read > 0)
+            if (strueventos->fd_sock == passive_sock)
             {
-                rbuffer[size_read] = '\0';
-            }
-            else
-            {
-                close(new_sock);
-                break;
+                aceptarClientes(passive_sock, fpoll);
             }
 
-            if (parseoSolicitud(rbuffer, new_sock) == 1)
+            // Error o desconexión inesperada
+            if (eventos[i].events & (EPOLLERR | EPOLLHUP))
             {
-                close(new_sock);
-                break;
+                cerrarCliente(fpoll, strueventos);
+                continue;
+            }
+
+            if ((eventos[i].events & EPOLLIN) && strueventos->estado == LEYENDO_PETICION)
+            {
+                manejarLectura(fpoll, strueventos);
             }
         }
     }
