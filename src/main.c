@@ -28,14 +28,15 @@ int main()
 
     while (1)
     {
-        int fd_socklistos = epoll_wait(fpoll, &ev, MAX_EVENTOS, -1);
+        int fd_socklistos = epoll_wait(fpoll, eventos, MAX_EVENTOS, -1);
         for (int i = 0; i < fd_socklistos; i++)
         {
-            struct sesion_sock *strueventos = (struct Sesion *)eventos[i].data.ptr;
+            struct sesion_sock *strueventos = (struct sesion_sock *)eventos[i].data.ptr;
 
             if (strueventos->fd_sock == passive_sock)
             {
                 aceptarClientes(passive_sock, fpoll);
+                continue;
             }
 
             // Error o desconexión inesperada
@@ -48,6 +49,11 @@ int main()
             if ((eventos[i].events & EPOLLIN) && strueventos->estado == LEYENDO_PETICION)
             {
                 manejarLectura(fpoll, strueventos);
+            }
+
+            if ((eventos[i].events & EPOLLOUT) && (strueventos->estado == ENVIANDO_CABECERAS || strueventos->estado == ENVIANDO_ARCHIVO))
+            {
+                manejarEscritura(fpoll, strueventos);
             }
         }
     }

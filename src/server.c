@@ -11,7 +11,13 @@
 #include "../include/http.h"
 #include "../include/server.h"
 
-struct epoll_event ev;
+static int configurarNoBloqueante(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+        return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
 int passivesockTCP(char *service, int qlen)
 {
@@ -80,16 +86,9 @@ int passivesockTCP(char *service, int qlen)
     return sfd;
 }
 
-static int configurarNoBloqueante(int fd)
-{
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags == -1)
-        return -1;
-    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-}
-
 void aceptarClientes(int passive_sock, int fd_epoll)
 {
+    struct epoll_event ev;
     configurarNoBloqueante(passive_sock);
 
     while (1)
@@ -111,38 +110,43 @@ void aceptarClientes(int passive_sock, int fd_epoll)
         scliente->fd_file_sol = -1;
         scliente->estado = LEYENDO_PETICION;
         ev.events = EPOLLIN;
-        ev.data.fd = new_cliente;
+        ev.data.ptr = scliente;
         epoll_ctl(fd_epoll, EPOLL_CTL_ADD, new_cliente, &ev);
     };
 }
 
 void manejarLectura(int fd_epoll, struct sesion_sock *cliente)
 {
+    struct epoll_event ev;
+
     while (1)
     {
-        ssize_t readed = read(cliente->fd_sock, cliente->buffer_soli, sizeof(cliente->buffer_soli));
+        ssize_t readed = read(cliente->fd_sock, cliente->buffer_soli + cliente->bytes_recibidos, sizeof(cliente->buffer_soli) - 1 - cliente->bytes_recibidos);
 
         if (readed > 0)
         {
             cliente->bytes_recibidos += readed;
             cliente->buffer_soli[cliente->bytes_recibidos] = '\0';
 
-            if (strchr(cliente->buffer_soli, '\r\n\r\n') != NULL)
+            if (strstr(cliente->buffer_soli, '\r\n\r\n') != NULL)
             {
                 cliente->estado = ENVIANDO_CABECERAS;
                 ev.events = EPOLLOUT;
                 ev.data.ptr = cliente;
                 epoll_ctl(fd_epoll, EPOLL_CTL_MOD, cliente->fd_sock, &ev);
+                parseoSolicitud(cliente->buffer_soli, cliente->fd_sock);
                 break;
             }
             else if (cliente->bytes_recibidos == sizeof(cliente->buffer_soli))
             {
+                ev.events = EPOLLOUT;
+                ev.data.ptr = cliente;
+                epoll_ctl(fd_epoll, EPOLL_CTL_MOD, cliente->fd_sock, &ev);
                 generarRespuesta(cliente->fd_sock, 400, NULL, "close");
             }
         }
         else if (readed == 0)
         {
-            generarRespuesta(cliente->fd_sock, 400, NULL, "close");
             cerrarCliente(fd_epoll, cliente);
             break;
         }
@@ -156,9 +160,110 @@ void manejarLectura(int fd_epoll, struct sesion_sock *cliente)
     }
 }
 
+void manejarEscritura(int fd_epoll, struct sesion_sock *cliente)
+{
+    if (cliente->estado == ENVIANDO_CABECERAS)
+    {
+        while (cliente->bytes_enviados < cliente->tam_buffer_resp)
+        {
+            ssize_t sended = send(cliente->fd_sock, cliente->buffer_resp + cliente->bytes_enviados,
+                                  cliente->tam_buffer_resp - cliente->bytes_enviados, 0);
+            if (sended > 0)
+            {
+                cliente->bytes_enviados += sended;
+            }
+            else if (sended < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            {
+                return;
+            }
+            else
+            {
+                // sended = 0 -> cliente se desconectó
+                cerrarCliente(fd_epoll, cliente);
+                return;
+            }
+        }
+
+        if (cliente->fd_file_sol != -1)
+        {
+            cliente->estado = ENVIANDO_ARCHIVO;
+        }
+        else
+        {
+            finalizarEnvio(fd_epoll, cliente);
+            return;
+        }
+    }
+
+    if (cliente->estado == ENVIANDO_ARCHIVO)
+    {
+        while (cliente->file_offset < cliente->tam_file)
+        {
+            ssize_t leidos = pread(cliente->fd_file_sol, cliente->buffer_resp, sizeof(cliente->buffer_resp), cliente->file_offset);
+            if (leidos <= 0)
+            {
+                cerrarCliente(fd_epoll, cliente);
+                return;
+            }
+
+            ssize_t writed = send(cliente->fd_sock, cliente->buffer_resp, leidos, 0);
+            if (writed > 0)
+            {
+                cliente->file_offset += writed;
+                if (writed < leidos)
+                {
+                    return;
+                }
+            }
+            else if (writed < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            {
+                return;
+            }
+            else
+            {
+                cerrarCliente(fd_epoll, cliente);
+                return;
+            }
+        }
+
+        finalizarEnvio(fd_epoll, cliente);
+    }
+}
+
 void cerrarCliente(int fd_epoll, struct sesion_sock *cliente)
 {
     epoll_ctl(fd_epoll, EPOLL_CTL_DEL, cliente->fd_sock, NULL);
     close(cliente->fd_sock);
+
+    if (cliente->fd_file_sol != -1)
+    {
+        close(cliente->fd_file_sol);
+    }
+
     free(cliente);
+}
+
+void finalizarEnvio(int fd_epoll, struct sesion_sock *cliente)
+{
+    struct epoll_event ev;
+
+    if (cliente->fd_file_sol != -1)
+    {
+        close(cliente->fd_file_sol);
+        cliente->fd_file_sol = -1;
+    }
+
+    if (cliente->keep_alive == 1)
+    {
+        cliente->bytes_recibidos = 0;
+        cliente->bytes_enviados = 0;
+        cliente->estado = LEYENDO_PETICION;
+        ev.events = EPOLLIN;
+        ev.data.ptr = cliente;
+        epoll_ctl(fd_epoll, EPOLL_CTL_MOD, cliente->fd_sock, &ev);
+    }
+    else
+    {
+        cerrarCliente(fd_epoll, cliente);
+    }
 }
